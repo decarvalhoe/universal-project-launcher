@@ -1,0 +1,169 @@
+---
+# Profil 42 Training - Eric de Carvalho
+# Session d'apprentissage optimisée pour la Piscine 42 Lausanne
+
+id: "42-training"
+name: "42 Training - Piscine Preparation"
+type: "learning"
+path: "/home/decarvalhoe/42_training"
+description: "Préparation intensive Piscine 42 Lausanne (Juin 2026)"
+
+# Configuration Claude spécifique
+claude_context:
+  role: |
+    Tu es mon assistant d'apprentissage pour la préparation 42.
+    Je suis Eric de Carvalho, je prépare la Piscine 42 Lausanne de juin 2026.
+
+    CONTEXTE PERSONNEL:
+    - Background: Tech Lead, Solution Architect, CSV Pharma
+    - Objectif: Retrouver le plaisir de coder directement
+    - Philosophie: Apprendre sans IA pendant les exercices
+    - Mode: Apprentissage par la pratique et répétition
+
+  learning_mode: |
+    MODE D'APPRENTISSAGE ACTIF:
+    1. Tu me guides étape par étape
+    2. Je tape mes commandes, tu les exécutes avec Bash
+    3. Feedback immédiat sur mes erreurs
+    4. Explications courtes et mémorables
+    5. Focus sur la muscle memory
+
+  current_level: |
+    NIVEAU ACTUEL:
+    - Exercice: 2 - Manipulation fichiers
+    - Étape: 2.3 - echo avec redirection
+    - Dernière commande: echo "Bonjour 42!" > hello.txt
+    - Status: En cours d'apprentissage bash basics
+
+  42_specific_rules: |
+    RÈGLES 42:
+    - Pas de Google/IA pendant exercices (sauf toi pour exécution)
+    - Utiliser man pour documentation
+    - Style 42 et Norminette à partir du mois 5
+    - Focus sur compréhension profonde
+    - Apprendre de chaque erreur
+
+  personality: |
+    PERSONNALITÉ:
+    - Encourageant mais exigeant
+    - Utilise des analogies simples
+    - Rappelle les erreurs précédentes pour apprendre
+    - Célèbre les petites victoires
+    - Style direct et efficace
+
+# Fichiers de contexte à inclure automatiquement
+context_files:
+  - "REPRENDRE_SESSION.md"
+  - "progression.json"
+  - "README.md"
+
+# Patterns de fichiers à surveiller
+auto_include_patterns:
+  - "*.md"
+  - "progression.json"
+  - ".gitignore"
+
+# Configuration de session
+session_name: "42-training-claude"
+working_directory: "/home/decarvalhoe/42_training"
+
+# Variables d'environnement
+environment_vars:
+  TRAINING_MODE: "42_PISCINE"
+  LEARNING_LEVEL: "BEGINNER"
+  NO_AI_MODE: "true"
+  CLAUDE_ROLE: "LEARNING_ASSISTANT"
+
+# Scripts de lancement
+pre_launch_script: |
+  # Afficher l'état actuel
+  cd /home/decarvalhoe/42_training
+  echo "📚 42 Training Session Starting..."
+  echo "📍 Current Exercise: $(grep 'current_exercise' progression.json | cut -d'"' -f4)"
+  echo "🎯 Next Command: $(grep 'next_command' progression.json | cut -d'"' -f4)"
+  echo ""
+
+  # Vérifier si git est à jour
+  if [ -d .git ]; then
+    git status --short
+  fi
+
+post_launch_script: |
+  # Sauvegarder automatiquement après la session
+  echo "💾 Auto-saving progress..."
+
+# Commandes rapides
+quick_commands:
+  - name: "Status"
+    command: "cat progression.json | jq '.progress.current_exercise'"
+    description: "Voir l'exercice actuel"
+
+  - name: "Errors"
+    command: "cat progression.json | jq '.mistakes'"
+    description: "Revoir mes erreurs"
+
+  - name: "Next"
+    command: "cat REPRENDRE_SESSION.md | grep 'PROCHAINE COMMANDE' -A 3"
+    description: "Voir la prochaine commande"
+
+  - name: "Save"
+    command: "./save_progress.sh"
+    description: "Sauvegarder la progression"
+
+  - name: "Push"
+    command: "./push_to_github.sh"
+    description: "Pousser sur GitHub"
+
+  - name: "Man"
+    command: "man"
+    description: "Documentation officielle (façon 42)"
+
+  - name: "Reset Exercise"
+    command: "rm -f hello.txt && touch hello.txt"
+    description: "Réinitialiser l'exercice actuel"
+
+# Métadonnées
+created_at: "2026-03-05T11:30:00"
+last_used: null
+usage_count: 0
+
+# État
+active: false
+pid: null
+
+# Configuration apprentissage
+learning_config:
+  exercises_completed: 1
+  current_week: 1
+  planning:
+    week_1_2: "Bash basics"
+    week_3_4: "Bash scripts"
+    month_2: "Vim + advanced bash"
+    month_3_4: "C from scratch"
+    month_5_6: "42 style + Norminette"
+
+  mistakes_tracking: true
+  auto_reminder: true
+  strict_mode: true
+
+# Notes et rappels
+notes: |
+  RAPPELS IMPORTANTS:
+  - La Piscine est en juin 2026 à Lausanne
+  - Objectif: Retrouver les bases, muscle memory
+  - Philosophie: Pas d'IA pendant les vrais exercices
+  - Erreurs communes: typos, oubli redirections, confusion ls/cd
+
+  PROGRESSION:
+  - ✅ Exercice 1: Navigation complété
+  - 🔄 Exercice 2: Manipulation fichiers (en cours)
+  - ⏳ Exercice 3: Permissions (à venir)
+
+# Tags pour recherche rapide
+tags:
+  - "42"
+  - "piscine"
+  - "learning"
+  - "bash"
+  - "lausanne"
+  - "2026"

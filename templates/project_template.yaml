@@ -1,0 +1,85 @@
+---
+# Template de Profil de Projet
+# Copier ce fichier et adapter selon vos besoins
+
+id: "PROJECT_ID"  # Identifiant unique (ex: "my-project")
+name: "PROJECT_NAME"  # Nom affiché (ex: "My Awesome Project")
+type: "development"  # Types: development, learning, devops, research, custom
+path: "/path/to/project"  # Chemin absolu vers le projet
+description: "Description du projet"
+
+# Configuration Claude - Adaptez selon vos besoins
+claude_context:
+  role: |
+    Description du rôle de Claude pour ce projet.
+    Exemple: Tu es mon assistant pour développer une API REST.
+
+  guidelines: |
+    Directives spécifiques pour ce projet.
+    Exemple: Utilise TypeScript, suis les patterns SOLID.
+
+  current_focus: |
+    Focus actuel du développement.
+    Exemple: Implémentation de l'authentification JWT.
+
+# Fichiers à inclure automatiquement dans le contexte
+context_files:
+  - "README.md"
+  - "package.json"  # Pour projets Node.js
+  - "requirements.txt"  # Pour projets Python
+  # - "docker-compose.yml"  # Si Docker
+
+# Patterns de fichiers à surveiller
+auto_include_patterns:
+  - "*.md"
+  - ".env.example"
+  - "*.config.js"
+
+# Configuration de session
+session_name: "project-session"
+working_directory: null  # null = utilise 'path', sinon spécifier
+
+# Variables d'environnement
+environment_vars:
+  NODE_ENV: "development"
+  # DATABASE_URL: "postgresql://..."
+
+# Scripts de lancement (optionnel)
+pre_launch_script: |
+  echo "Starting project session..."
+  # git pull origin main
+
+post_launch_script: |
+  echo "Session ready!"
+  # npm start &
+
+# Commandes rapides
+quick_commands:
+  - name: "Status"
+    command: "git status"
+    description: "Voir l'état Git"
+
+  - name: "Test"
+    command: "npm test"
+    description: "Lancer les tests"
+
+  - name: "Build"
+    command: "npm run build"
+    description: "Builder le projet"
+
+  - name: "Logs"
+    command: "docker compose logs -f"
+    description: "Voir les logs Docker"
+
+# Notes et documentation
+notes: |
+  Notes importantes pour ce projet.
+  - Architecture: MVC
+  - Base de données: PostgreSQL
+  - API: REST avec Express
+
+# Tags pour recherche
+tags:
+  - "api"
+  - "typescript"
+  - "postgresql"
