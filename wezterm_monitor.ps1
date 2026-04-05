@@ -34,26 +34,55 @@ $sshKey    = "~/.ssh/id_rsa"
 $wezterm   = "C:\Program Files\WezTerm\wezterm-gui.exe"
 $tag        = "[wez-monitor]"
 
-# --- Detect monitors ---
+# --- Detect laptop's built-in screens ---
+# The laptop has 2 screens: main (16:9) and ScreenPad (ultra-wide ~3.5:1).
+# The ScreenPad's unique aspect ratio (>3:1) identifies it reliably.
+# The main laptop screen shares the same X position as the ScreenPad.
 $allScreens = [System.Windows.Forms.Screen]::AllScreens
-$extScreens = $allScreens | Where-Object { -not $_.Primary } | Sort-Object { $_.WorkingArea.Y }
 
-if ($extScreens.Count -ge 2) {
-    $scr1 = $extScreens[0].WorkingArea
-    $scr2 = $extScreens[1].WorkingArea
-} elseif ($extScreens.Count -eq 1) {
-    $scr1 = $extScreens[0].WorkingArea
-    $scr2 = $extScreens[0].WorkingArea
+# Step 1: find the ScreenPad by aspect ratio > 3:1
+$screenPad = $allScreens | Where-Object {
+    $b = $_.Bounds
+    ($b.Width / [Math]::Max($b.Height, 1)) -gt 3.0
+} | Select-Object -First 1
+
+if ($screenPad) {
+    $padX = $screenPad.Bounds.X
+    # Step 2: find the main laptop screen at the same X position (not the ScreenPad)
+    $laptopMain = $allScreens | Where-Object {
+        $_.Bounds.X -eq $padX -and $_.DeviceName -ne $screenPad.DeviceName
+    } | Select-Object -First 1
+
+    if ($laptopMain) {
+        $scr1 = $laptopMain.WorkingArea
+        $scr2 = $screenPad.WorkingArea
+    } else {
+        # Fallback: ScreenPad found but no matching main screen, use ScreenPad for both
+        Write-Host "$tag WARNING: ScreenPad found but no matching main screen"
+        $scr1 = $screenPad.WorkingArea
+        $scr2 = $screenPad.WorkingArea
+    }
 } else {
-    $primary = ($allScreens | Where-Object { $_.Primary })[0].WorkingArea
-    $scr1 = $primary; $scr2 = $primary
+    # Fallback: no ScreenPad detected, use two non-primary sorted by Y
+    Write-Host "$tag WARNING: No ScreenPad detected, falling back to non-primary screens"
+    $fallback = $allScreens | Where-Object { -not $_.Primary } | Sort-Object { $_.WorkingArea.Y }
+    if ($fallback.Count -ge 2) {
+        $scr1 = $fallback[0].WorkingArea
+        $scr2 = $fallback[1].WorkingArea
+    } elseif ($fallback.Count -eq 1) {
+        $scr1 = $fallback[0].WorkingArea
+        $scr2 = $fallback[0].WorkingArea
+    } else {
+        $scr1 = ($allScreens | Where-Object { $_.Primary })[0].WorkingArea
+        $scr2 = $scr1
+    }
 }
 
 $screen1 = @{ L=$scr1.X; T=$scr1.Y; W=$scr1.Width; H=$scr1.Height }
 $screen2 = @{ L=$scr2.X; T=$scr2.Y; W=$scr2.Width; H=$scr2.Height }
 
-Write-Host "$tag Screen1: ($($screen1.L),$($screen1.T)) $($screen1.W)x$($screen1.H)"
-Write-Host "$tag Screen2: ($($screen2.L),$($screen2.T)) $($screen2.W)x$($screen2.H)"
+Write-Host "$tag Laptop main (screen1): ($($screen1.L),$($screen1.T)) $($screen1.W)x$($screen1.H)"
+Write-Host "$tag ScreenPad (screen2):   ($($screen2.L),$($screen2.T)) $($screen2.W)x$($screen2.H)"
 
 # --- Session profiles ---
 $profiles = @{
