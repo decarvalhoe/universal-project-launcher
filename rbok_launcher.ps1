@@ -100,6 +100,18 @@ function Start-Wez($profileName, [switch]$ReconnectAll, [switch]$RepositionOnly)
     Start-Process powershell.exe -ArgumentList $args -WindowStyle Hidden
 }
 
+# Bring all 6 windows of a profile to the foreground (Z-order raise + focus).
+# Uses Show-W11TaskbarGroup from the w11-theming-suite TaskbarGrouping module.
+$tgModulePath = 'C:\Dev\w11-theming-suite\modules\TaskbarGrouping\TaskbarGrouping.psm1'
+if (Test-Path $tgModulePath) {
+    Import-Module $tgModulePath -Force -DisableNameChecking -ErrorAction SilentlyContinue
+}
+function Bring-WezGroupToFront($profileName) {
+    if (Get-Command Show-W11TaskbarGroup -ErrorAction SilentlyContinue) {
+        Show-W11TaskbarGroup -Profile $profileName | Out-Null
+    }
+}
+
 # ============================================================
 #  Status header (top of menu — informational, no action)
 # ============================================================
@@ -109,7 +121,8 @@ function Get-ProfileStatus($profileName, $expected = 6) {
     $pids = (Get-Content $f -ErrorAction SilentlyContinue) | Where-Object { $_ -match '^\d+$' } | ForEach-Object { [int]$_ }
     $alive = 0
     foreach ($p in $pids) {
-        if (Get-Process -Id $p -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -eq 'wezterm-gui' }) { $alive++ }
+        # Match bare 'wezterm-gui' AND per-profile aliases 'wezterm-gui-rbok' etc.
+        if (Get-Process -Id $p -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -like 'wezterm-gui*' }) { $alive++ }
     }
     $glyph = if ($alive -eq 0) { "⚪" } elseif ($alive -lt $expected) { "🟡" } else { "🟢" }
     return "$profileName $glyph $alive/$expected"
@@ -133,6 +146,7 @@ Add-Sep $menu
 # ----- 🚀 RBOK -----
 $rbok = Add-Sub $menu "🚀  RBOK  —  6 agents WezTerm" -Bold
 Add-DropItem $rbok "🟢  Launch 6 agents"        { Start-Wez 'rbok' } -Bold
+Add-DropItem $rbok "🪟  Bring all to front (Ctrl+Alt+R)" { Bring-WezGroupToFront 'rbok' } -Bold
 Add-DropItem $rbok "🔄  Reconnect (this profile only)" { Start-Wez 'rbok' -ReconnectAll }
 Add-DropItem $rbok "📐  Reposition windows"     { Start-Wez 'rbok' -RepositionOnly }
 Add-DropSep $rbok
@@ -147,6 +161,7 @@ Add-DropItem $rbok "💻  Local Orchestrator (Resume)" { Start-Script "$scriptDi
 # ----- 🚀 NOMOS -----
 $nomos = Add-Sub $menu "🚀  NOMOS  —  6 agents WezTerm" -Bold
 Add-DropItem $nomos "🟢  Launch 6 agents"        { Start-Wez 'nomos' } -Bold
+Add-DropItem $nomos "🪟  Bring all to front (Ctrl+Alt+N)" { Bring-WezGroupToFront 'nomos' } -Bold
 Add-DropItem $nomos "🔄  Reconnect (this profile only)" { Start-Wez 'nomos' -ReconnectAll }
 Add-DropItem $nomos "📐  Reposition windows"     { Start-Wez 'nomos' -RepositionOnly }
 Add-DropSep $nomos
@@ -157,6 +172,7 @@ Add-DropItem $nomos "🌐  GitHub: RBOKproject/Nomos" { Start-Process "https://g
 # ----- 🚀 42-Training -----
 $ft = Add-Sub $menu "🚀  42 Training  —  6 agents WezTerm" -Bold
 Add-DropItem $ft "🟢  Launch 6 agents"           { Start-Wez '42t' } -Bold
+Add-DropItem $ft "🪟  Bring all to front (Ctrl+Alt+T)" { Bring-WezGroupToFront '42t' } -Bold
 Add-DropItem $ft "🔄  Reconnect (this profile only)" { Start-Wez '42t' -ReconnectAll }
 Add-DropItem $ft "📐  Reposition windows"        { Start-Wez '42t' -RepositionOnly }
 Add-DropSep $ft
@@ -244,10 +260,53 @@ $tray.Add_MouseClick({
     }
 })
 
+# ============================================================
+#  Global hotkeys: Ctrl+Alt+R / Ctrl+Alt+N / Ctrl+Alt+T
+#  Bring all windows of a profile to the foreground in one shot.
+# ============================================================
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+using System.Windows.Forms;
+public class HotkeyForm : Form {
+    [DllImport("user32.dll")] public static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
+    [DllImport("user32.dll")] public static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+    public const int WM_HOTKEY = 0x0312;
+    public const uint MOD_ALT = 0x1, MOD_CTRL = 0x2;
+    public Action<int> OnHotkey;
+    public HotkeyForm() {
+        this.ShowInTaskbar = false;
+        this.WindowState = FormWindowState.Minimized;
+        this.FormBorderStyle = FormBorderStyle.FixedToolWindow;
+        this.Opacity = 0;
+        this.Load += (s,e) => this.Visible = false;
+    }
+    protected override void WndProc(ref Message m) {
+        if (m.Msg == WM_HOTKEY && OnHotkey != null) OnHotkey((int)m.WParam);
+        base.WndProc(ref m);
+    }
+}
+"@ -ReferencedAssemblies System.Windows.Forms -ErrorAction SilentlyContinue
+
+$hkForm = New-Object HotkeyForm
+$hkForm.OnHotkey = {
+    param($id)
+    switch ($id) {
+        1 { Bring-WezGroupToFront 'rbok' }
+        2 { Bring-WezGroupToFront 'nomos' }
+        3 { Bring-WezGroupToFront '42t' }
+    }
+}
+# VK_R = 0x52, VK_N = 0x4E, VK_T = 0x54
+$mod = [HotkeyForm]::MOD_CTRL -bor [HotkeyForm]::MOD_ALT
+[HotkeyForm]::RegisterHotKey($hkForm.Handle, 1, $mod, 0x52) | Out-Null
+[HotkeyForm]::RegisterHotKey($hkForm.Handle, 2, $mod, 0x4E) | Out-Null
+[HotkeyForm]::RegisterHotKey($hkForm.Handle, 3, $mod, 0x54) | Out-Null
+
 # Boot toast
 $tray.BalloonTipTitle = "RBOK / NOMOS / 42T launcher"
-$tray.BalloonTipText  = "Ready. Right-click the tray icon for menu."
+$tray.BalloonTipText  = "Ready. Hotkeys: Ctrl+Alt+R/N/T to bring profile groups to front."
 $tray.BalloonTipIcon  = [System.Windows.Forms.ToolTipIcon]::Info
-$tray.ShowBalloonTip(2000)
+$tray.ShowBalloonTip(2500)
 
-[System.Windows.Forms.Application]::Run()
+[System.Windows.Forms.Application]::Run($hkForm)
