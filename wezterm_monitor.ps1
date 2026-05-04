@@ -1,4 +1,4 @@
-# wezterm_monitor.ps1 - Multi-project WezTerm SSH/tmux Monitor
+﻿# wezterm_monitor.ps1 - Multi-project WezTerm SSH/tmux Monitor
 # Auto-reconnect SSH + Auto-position windows on laptop's built-in screens
 #
 # Positioning strategy (workaround for WezTerm/winit DPI bug):
@@ -37,13 +37,90 @@ public class WinPos {
     public const uint SWP_NOSIZE   = 0x0001;
     public const uint SWP_NOZORDER = 0x0004;
 }
+
+// AppUserModelID grouping for Windows taskbar
+// Setting the same AUMID on multiple windows makes Windows combine them
+// in a single taskbar group (with hover preview thumbnails).
+public class WindowAUMID {
+    [DllImport("shell32.dll", PreserveSig = false)]
+    public static extern void SHGetPropertyStoreForWindow(
+        IntPtr hwnd,
+        ref Guid iid,
+        [MarshalAs(UnmanagedType.Interface)] out IPropertyStore ppv);
+
+    [Guid("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    [ComImport]
+    public interface IPropertyStore {
+        void GetCount(out uint cProps);
+        void GetAt(uint iProp, out PROPERTYKEY pkey);
+        void GetValue(ref PROPERTYKEY key, out PropVariant pv);
+        void SetValue(ref PROPERTYKEY key, ref PropVariant pv);
+        void Commit();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct PROPERTYKEY { public Guid fmtid; public uint pid; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct PropVariant {
+        public ushort vt;
+        public ushort wReserved1, wReserved2, wReserved3;
+        public IntPtr pwszVal;
+        public IntPtr p2;
+    }
+
+    public const ushort VT_LPWSTR = 31;
+
+    public static bool SetAppId(IntPtr hwnd, string aumid) {
+        try {
+            Guid iid = new Guid("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99");
+            IPropertyStore ps;
+            SHGetPropertyStoreForWindow(hwnd, ref iid, out ps);
+            // PKEY_AppUserModel_ID = {9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3}, 5
+            PROPERTYKEY key = new PROPERTYKEY {
+                fmtid = new Guid("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3"),
+                pid   = 5
+            };
+            PropVariant pv = new PropVariant {
+                vt       = VT_LPWSTR,
+                pwszVal  = Marshal.StringToCoTaskMemUni(aumid)
+            };
+            ps.SetValue(ref key, ref pv);
+            ps.Commit();
+            Marshal.FreeCoTaskMem(pv.pwszVal);
+            Marshal.ReleaseComObject(ps);
+            return true;
+        } catch (Exception) { return false; }
+    }
+}
 "@
 
 # --- SSH Config ---
 $sshTarget = "194360-10166@gate.jpc.infomaniak.com"
 $sshKey    = "~/.ssh/id_rsa"
-$wezterm   = "C:\Program Files\WezTerm\wezterm-gui.exe"
-$tag        = "[wez-monitor]"
+$wezSource = "C:\Program Files\WezTerm\wezterm-gui.exe"
+$tag       = "[wez-monitor]"
+
+# Taskbar grouping via w11-theming-suite TaskbarGrouping module if available.
+# Falls back to the original wezterm-gui.exe when the module is missing.
+# Per-profile EXE hardlinks are required on Windows 11 26200+ where AUMID
+# and window class alone are insufficient.
+$grouping = $null
+$tgModulePath = 'C:\Dev\w11-theming-suite\modules\TaskbarGrouping\TaskbarGrouping.psm1'
+if ($Profile -and (Test-Path $tgModulePath)) {
+    try {
+        Import-Module $tgModulePath -Force -DisableNameChecking -ErrorAction Stop
+        # Idempotent: ensures the hardlink + sibling DLLs exist for this profile.
+        Set-W11TaskbarGrouping -SourceExe $wezSource -Profile $Profile -WithDependencies | Out-Null
+        $grouping = Get-W11TaskbarGroupingLaunchSpec -SourceExe $wezSource -Profile $Profile -App wezterm
+        Write-Host "$tag Taskbar grouping module loaded — alias: $($grouping.ExecutablePath)"
+    } catch {
+        Write-Host "$tag WARNING: TaskbarGrouping module load failed: $_"
+    }
+}
+$wezterm = if ($grouping -and $grouping.ExecutablePath) { $grouping.ExecutablePath } else { $wezSource }
+$wezExtraArgs = if ($grouping) { $grouping.ExtraArgs } else { @('start','--always-new-process') }
 
 # --- Detect laptop's built-in screens ---
 $allScreens = [System.Windows.Forms.Screen]::AllScreens
@@ -93,13 +170,21 @@ $profiles = @{
         @{ Name="cursor";       Tmux="42t-cursor";       Screen=$screen2; Cols=2; Rows=1; Col=0; Row=0 },
         @{ Name="gemini";       Tmux="42t-gemini";       Screen=$screen2; Cols=2; Rows=1; Col=1; Row=0 }
     )
+    "nomos" = @(
+        @{ Name="orch";    Tmux="orch";    Screen=$screen1; Cols=2; Rows=2; Col=0; Row=0 },
+        @{ Name="claude";  Tmux="claude";  Screen=$screen1; Cols=2; Rows=2; Col=1; Row=0 },
+        @{ Name="codex";   Tmux="codex";   Screen=$screen1; Cols=2; Rows=2; Col=0; Row=1 },
+        @{ Name="copilot"; Tmux="copilot"; Screen=$screen1; Cols=2; Rows=2; Col=1; Row=1 },
+        @{ Name="cursor";  Tmux="cursor";  Screen=$screen2; Cols=2; Rows=1; Col=0; Row=0 },
+        @{ Name="gemini";  Tmux="gemini";  Screen=$screen2; Cols=2; Rows=1; Col=1; Row=0 }
+    )
 }
 
 # --- Functions ---
 
 function Get-WezTermWindows {
     $handles = @()
-    Get-Process -Name "wezterm-gui" -ErrorAction SilentlyContinue | ForEach-Object {
+    Get-Process | Where-Object { $_.Name -like 'wezterm-gui*' } -ErrorAction SilentlyContinue | ForEach-Object {
         $h = $_.MainWindowHandle
         if ($h -ne [IntPtr]::Zero -and [WinPos]::IsWindowVisible($h)) {
             $handles += @{ Handle = $h; PID = $_.Id }
@@ -115,12 +200,15 @@ function Test-SSHConnection {
 
 function Start-WezTermSession($session) {
     $name = $session.Tmux
-    $scriptPath = Join-Path $env:TEMP "wez_connect_$name.sh"
+    # Profile-tagged script path so multiple profiles can coexist on disk
+    $scriptPath = Join-Path $env:TEMP "wez_connect_${Profile}_$name.sh"
     @"
 #!/bin/bash
+printf '\e]0;[$Profile-$name]\a'
 while true; do
     clear
-    echo "[$name] Connecting..."
+    printf '\e]0;[$Profile-$name]\a'
+    echo "[$Profile-$name] Connecting..."
     ssh -tt -p 3022 \
         -o ConnectTimeout=10 \
         -o ServerAliveInterval=15 \
@@ -130,13 +218,48 @@ while true; do
         $sshTarget \
         "tmux attach-session -t $name 2>/dev/null || tmux new-session -As $name"
     echo ""
-    echo "[$name] Disconnected. Reconnecting in 5s... (Ctrl+C to stop)"
+    echo "[$Profile-$name] Disconnected. Reconnecting in 5s... (Ctrl+C to stop)"
     sleep 5
 done
-"@ | Set-Content -Path $scriptPath -Encoding UTF8 -NoNewline
+"@.Replace("`r`n", "`n") | ForEach-Object { [System.IO.File]::WriteAllText($scriptPath, $_, (New-Object System.Text.UTF8Encoding $false)) }
     $wslPath = $scriptPath -replace '\\','/' -replace '^C:','/mnt/c'
-    $proc = Start-Process -FilePath $wezterm -ArgumentList "start --always-new-process -- wsl bash $wslPath" -PassThru
+    # Build full arg list: TaskbarGrouping module's launch-spec args (which
+    # include `start --class W11ThemingSuite.<profile> --always-new-process`)
+    # plus the program separator and the wsl bash command.
+    $args = @() + $wezExtraArgs + @('--','wsl','bash',$wslPath)
+    $proc = Start-Process -FilePath $wezterm -ArgumentList $args -PassThru
     return $proc
+}
+
+function Get-PidFilePath($profileName) {
+    $dir = Join-Path $env:LOCALAPPDATA "wezterm-launcher"
+    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+    return (Join-Path $dir "$profileName.pids")
+}
+
+function Save-PidsForProfile($profileName, $pids) {
+    $f = Get-PidFilePath $profileName
+    $pids -join "`n" | Set-Content -Path $f -Encoding utf8
+}
+
+function Get-WezTermWindowsForProfile($profileName) {
+    # PID-file tracking: more reliable than title matching, because tmux
+    # overwrites the OSC 0 title we set on connect.
+    $f = Get-PidFilePath $profileName
+    if (-not (Test-Path $f)) { return @() }
+    $tracked = (Get-Content $f -ErrorAction SilentlyContinue) | Where-Object { $_ -match '^\d+$' } | ForEach-Object { [int]$_ }
+    if (-not $tracked) { return @() }
+    $alive = @()
+    foreach ($wpid in $tracked) {
+        $p = Get-Process -Id $wpid -ErrorAction SilentlyContinue
+        if ($p -and $p.ProcessName -eq 'wezterm-gui') {
+            $h = $p.MainWindowHandle
+            if ($h -ne [IntPtr]::Zero -and [WinPos]::IsWindowVisible($h)) {
+                $alive += @{ Handle = $h; PID = $p.Id; Title = $p.MainWindowTitle }
+            }
+        }
+    }
+    return $alive
 }
 
 function Position-Window($handle, $session) {
@@ -219,23 +342,42 @@ if ($RepositionOnly) {
 }
 
 if ($ReconnectAll) {
-    Write-Host "$tag Killing existing WezTerm..."
-    Get-Process -Name "wezterm-gui" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-    Start-Sleep -Seconds 2
+    # FIX B3: kill ONLY windows tagged for this profile, not every wezterm-gui
+    Write-Host "$tag Killing existing WezTerm windows for profile '$Profile'..."
+    $myWindows = Get-WezTermWindowsForProfile $Profile
+    if ($myWindows.Count -gt 0) {
+        $myWindows | ForEach-Object {
+            Stop-Process -Id $_.PID -Force -ErrorAction SilentlyContinue
+            Write-Host "$tag   killed PID $($_.PID) ($($_.Title))"
+        }
+        Start-Sleep -Seconds 2
+    } else {
+        Write-Host "$tag   (no existing windows for profile $Profile)"
+    }
 }
 
 if (-not $ReconnectAll) {
-    $existing = Get-Process -Name "wezterm-gui" -ErrorAction SilentlyContinue
-    if ($existing -and $existing.Count -ge 6) {
-        Write-Host "$tag Already running ($($existing.Count) windows). Use -RepositionOnly or -ReconnectAll."
+    # FIX B1: count only windows for THIS profile, not all wez-gui across profiles.
+    # This allows RBOK + NOMOS (+ 42T) to coexist on screen.
+    $existingForProfile = Get-WezTermWindowsForProfile $Profile
+    if ($existingForProfile -and $existingForProfile.Count -ge $sessions.Count) {
+        Write-Host "$tag Profile '$Profile' already has $($existingForProfile.Count) windows running. Use -RepositionOnly or -ReconnectAll to refresh."
+        exit 0
+    }
+    if ($existingForProfile -and $existingForProfile.Count -gt 0 -and $existingForProfile.Count -lt $sessions.Count) {
+        Write-Host "$tag Profile '$Profile' partial: $($existingForProfile.Count)/$($sessions.Count) windows. Will not duplicate; use -ReconnectAll to refresh from scratch."
         exit 0
     }
 }
 
-$statePath = Join-Path $env:USERPROFILE ".local\share\wezterm"
-if (Test-Path $statePath) {
-    Remove-Item $statePath -Recurse -Force -ErrorAction SilentlyContinue
-    New-Item -ItemType Directory -Path $statePath -Force | Out-Null
+# FIX B2: only wipe the wezterm state dir on -ReconnectAll. Otherwise it
+# kills the local state of OTHER profiles' windows (RBOK ↔ NOMOS coexistence).
+if ($ReconnectAll) {
+    $statePath = Join-Path $env:USERPROFILE ".local\share\wezterm"
+    if (Test-Path $statePath) {
+        Remove-Item $statePath -Recurse -Force -ErrorAction SilentlyContinue
+        New-Item -ItemType Directory -Path $statePath -Force | Out-Null
+    }
 }
 
 Write-Host "$tag Testing SSH..."
@@ -248,6 +390,8 @@ Write-Host "$tag SSH OK. Launching $($sessions.Count) sessions..."
 
 $positionedHandles = @{}
 $knownHandlesBefore = @{}
+$spawnedPids = @()  # FIX B1: track PIDs we spawn for THIS profile so future calls
+                    # can detect which windows belong to which profile.
 Get-WezTermWindows | ForEach-Object { $knownHandlesBefore[$_.Handle] = $true }
 
 foreach ($s in $sessions) {
@@ -255,11 +399,13 @@ foreach ($s in $sessions) {
     if ($proc) { Write-Host "$tag Launched $($s.Name)" }
 
     $newHandle = $null
+    $newPid = $null
     for ($wait = 0; $wait -lt 20; $wait++) {
         Start-Sleep -Milliseconds 500
         foreach ($w in (Get-WezTermWindows)) {
             if (-not $knownHandlesBefore.ContainsKey($w.Handle) -and -not $positionedHandles.ContainsKey($w.Handle)) {
                 $newHandle = $w.Handle
+                $newPid = $w.PID
                 break
             }
         }
@@ -268,7 +414,14 @@ foreach ($s in $sessions) {
 
     if ($newHandle) {
         Position-Window $newHandle $s
+        # Set AUMID so Windows groups all 6 windows of THIS profile in a
+        # single taskbar button with hover preview thumbnails.
+        # AUMID format: <Vendor>.<App>.<Profile> — must be unique per group.
+        $aumid = "Realisons.RBOKLauncher.$Profile"
+        $ok = [WindowAUMID]::SetAppId($newHandle, $aumid)
+        if ($ok) { Write-Host "$tag   $($s.Name) -> taskbar group '$aumid'" }
         $positionedHandles[$newHandle] = $true
+        if ($newPid) { $spawnedPids += $newPid }
     } else {
         Write-Host "$tag WARNING: no new window for $($s.Name)"
     }
@@ -277,6 +430,14 @@ foreach ($s in $sessions) {
 # Restore any minimized windows
 foreach ($h in $positionedHandles.Keys) {
     if ([WinPos]::IsIconic($h)) { [WinPos]::ShowWindow($h, 9) }
+}
+
+# FIX B1: persist the PIDs so subsequent calls (parallel profile launch,
+# -ReconnectAll for THIS profile only, status check) can find OUR windows
+# without confusing them with other profiles' windows.
+if ($spawnedPids.Count -gt 0) {
+    Save-PidsForProfile $Profile $spawnedPids
+    Write-Host "$tag Tracked $($spawnedPids.Count) PIDs for profile '$Profile' in $(Get-PidFilePath $Profile)"
 }
 
 Write-Host "$tag Done. Auto-reconnect active in each window."
