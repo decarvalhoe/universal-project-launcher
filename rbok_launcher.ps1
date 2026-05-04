@@ -12,6 +12,92 @@ Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName Microsoft.VisualBasic
 
 # ============================================================
+#  Win11 native theming (auto Light/Dark + Mica backdrop)
+# ============================================================
+# Read AppsUseLightTheme from the system, render the ContextMenuStrip with
+# colors that match, and apply DWM Mica backdrop (DWMWA_SYSTEMBACKDROP_TYPE)
+# to the popup window so it gets the same translucency as native Win11
+# context menus.
+function Get-IsDarkMode {
+    $v = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize' -Name AppsUseLightTheme -ErrorAction SilentlyContinue).AppsUseLightTheme
+    return ($v -eq 0)
+}
+$isDark = Get-IsDarkMode
+
+Add-Type -ReferencedAssemblies System.Windows.Forms,System.Drawing -TypeDefinition @"
+using System;
+using System.Drawing;
+using System.Runtime.InteropServices;
+using System.Windows.Forms;
+
+public static class TrayDwm {
+    [DllImport("dwmapi.dll")]
+    public static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
+    public const int DWMWA_USE_IMMERSIVE_DARK_MODE = 20;
+    public const int DWMWA_SYSTEMBACKDROP_TYPE     = 38;
+    public const int DWMSBT_AUTO       = 0;
+    public const int DWMSBT_NONE       = 1;
+    public const int DWMSBT_MAINWINDOW = 2;  // Mica
+    public const int DWMSBT_TRANSIENT  = 3;  // Acrylic
+    public const int DWMSBT_TABBED     = 4;  // Mica Alt
+    public static void Apply(IntPtr h, bool dark, int backdrop) {
+        int d = dark ? 1 : 0;
+        DwmSetWindowAttribute(h, DWMWA_USE_IMMERSIVE_DARK_MODE, ref d, 4);
+        int b = backdrop;
+        DwmSetWindowAttribute(h, DWMWA_SYSTEMBACKDROP_TYPE, ref b, 4);
+    }
+}
+
+public class TrayDarkColorTable : ProfessionalColorTable {
+    public override Color MenuStripGradientBegin           => Color.FromArgb(32, 32, 32);
+    public override Color MenuStripGradientEnd             => Color.FromArgb(32, 32, 32);
+    public override Color ToolStripDropDownBackground      => Color.FromArgb(32, 32, 32);
+    public override Color ImageMarginGradientBegin         => Color.FromArgb(32, 32, 32);
+    public override Color ImageMarginGradientMiddle        => Color.FromArgb(32, 32, 32);
+    public override Color ImageMarginGradientEnd           => Color.FromArgb(32, 32, 32);
+    public override Color MenuItemSelected                 => Color.FromArgb(60, 60, 60);
+    public override Color MenuItemSelectedGradientBegin    => Color.FromArgb(60, 60, 60);
+    public override Color MenuItemSelectedGradientEnd      => Color.FromArgb(60, 60, 60);
+    public override Color MenuItemPressedGradientBegin     => Color.FromArgb(80, 80, 80);
+    public override Color MenuItemPressedGradientEnd       => Color.FromArgb(80, 80, 80);
+    public override Color MenuItemPressedGradientMiddle    => Color.FromArgb(80, 80, 80);
+    public override Color MenuItemBorder                   => Color.FromArgb(80, 80, 80);
+    public override Color MenuBorder                       => Color.FromArgb(60, 60, 60);
+    public override Color SeparatorDark                    => Color.FromArgb(70, 70, 70);
+    public override Color SeparatorLight                   => Color.FromArgb(70, 70, 70);
+    public override Color CheckBackground                  => Color.FromArgb(60, 60, 60);
+    public override Color CheckSelectedBackground          => Color.FromArgb(80, 80, 80);
+    public override Color CheckPressedBackground           => Color.FromArgb(100, 100, 100);
+    public override Color StatusStripGradientBegin         => Color.FromArgb(32, 32, 32);
+    public override Color StatusStripGradientEnd           => Color.FromArgb(32, 32, 32);
+}
+
+public class TrayLightColorTable : ProfessionalColorTable {
+    public override Color MenuStripGradientBegin           => Color.FromArgb(243, 243, 243);
+    public override Color MenuStripGradientEnd             => Color.FromArgb(243, 243, 243);
+    public override Color ToolStripDropDownBackground      => Color.FromArgb(243, 243, 243);
+    public override Color ImageMarginGradientBegin         => Color.FromArgb(243, 243, 243);
+    public override Color ImageMarginGradientMiddle        => Color.FromArgb(243, 243, 243);
+    public override Color ImageMarginGradientEnd           => Color.FromArgb(243, 243, 243);
+    public override Color MenuItemSelected                 => Color.FromArgb(220, 220, 220);
+    public override Color MenuItemSelectedGradientBegin    => Color.FromArgb(220, 220, 220);
+    public override Color MenuItemSelectedGradientEnd      => Color.FromArgb(220, 220, 220);
+    public override Color MenuItemPressedGradientBegin     => Color.FromArgb(200, 200, 200);
+    public override Color MenuItemPressedGradientEnd       => Color.FromArgb(200, 200, 200);
+    public override Color MenuItemPressedGradientMiddle    => Color.FromArgb(200, 200, 200);
+    public override Color MenuItemBorder                   => Color.FromArgb(200, 200, 200);
+    public override Color MenuBorder                       => Color.FromArgb(220, 220, 220);
+    public override Color SeparatorDark                    => Color.FromArgb(220, 220, 220);
+    public override Color SeparatorLight                   => Color.FromArgb(220, 220, 220);
+    public override Color CheckBackground                  => Color.FromArgb(220, 220, 220);
+    public override Color CheckSelectedBackground          => Color.FromArgb(200, 200, 200);
+    public override Color CheckPressedBackground           => Color.FromArgb(180, 180, 180);
+    public override Color StatusStripGradientBegin         => Color.FromArgb(243, 243, 243);
+    public override Color StatusStripGradientEnd           => Color.FromArgb(243, 243, 243);
+}
+"@
+
+# ============================================================
 #  Configuration
 # ============================================================
 $scriptDir            = Split-Path -Parent $PSCommandPath
@@ -44,6 +130,22 @@ $tray.Text    = "RBOK / NOMOS / 42T launcher"
 $tray.Visible = $true
 
 $menu = New-Object System.Windows.Forms.ContextMenuStrip
+# Apply Win11 native theming to the menu
+$colorTable = if ($isDark) { New-Object TrayDarkColorTable } else { New-Object TrayLightColorTable }
+$menu.Renderer = New-Object System.Windows.Forms.ToolStripProfessionalRenderer($colorTable)
+$menu.ForeColor = if ($isDark) { [System.Drawing.Color]::FromArgb(240,240,240) } else { [System.Drawing.Color]::FromArgb(20,20,20) }
+$menu.BackColor = if ($isDark) { [System.Drawing.Color]::FromArgb(32,32,32) } else { [System.Drawing.Color]::FromArgb(243,243,243) }
+$menu.Font      = New-Object System.Drawing.Font('Segoe UI Variable', 9.0)
+$menu.RenderMode = [System.Windows.Forms.ToolStripRenderMode]::Professional
+# Apply DWM Mica backdrop + immersive dark mode each time the menu opens
+# (the popup HWND is recreated/re-themed by the Shell on each Show()).
+$menu.add_Opened({
+    try {
+        if ($menu.Handle -ne [IntPtr]::Zero) {
+            [TrayDwm]::Apply($menu.Handle, $isDark, [TrayDwm]::DWMSBT_TABBED)
+        }
+    } catch {}
+})
 
 # ============================================================
 #  Menu helpers
@@ -62,6 +164,19 @@ function Add-Item($parent, $text, $action, [switch]$Bold) {
 function Add-Sub($parent, $text, [switch]$Bold) {
     $i = New-MenuItem $text $null -Bold:$Bold
     [void]$parent.Items.Add($i)
+    # Inherit theming on the sub-menu's DropDown (separate HWND, same look)
+    $i.DropDown.Renderer  = $menu.Renderer
+    $i.DropDown.BackColor = $menu.BackColor
+    $i.DropDown.ForeColor = $menu.ForeColor
+    $i.DropDown.Font      = $menu.Font
+    $i.DropDown.add_Opened({
+        param($s, $e)
+        try {
+            if ($s -and $s.Handle -ne [IntPtr]::Zero) {
+                [TrayDwm]::Apply($s.Handle, $isDark, [TrayDwm]::DWMSBT_TABBED)
+            }
+        } catch {}
+    })
     return $i
 }
 function Add-DropItem($parent, $text, $action, [switch]$Bold) {
